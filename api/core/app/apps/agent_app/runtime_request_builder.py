@@ -34,7 +34,7 @@ from clients.agent_backend import (
     redact_for_agent_backend_log,
 )
 from configs import dify_config
-from core.app.apps.agent_app.run_context import agent_app_inputs_var
+from core.app.apps.agent_app.run_context import render_runtime_inputs
 from core.app.entities.app_invoke_entities import DifyRunContext, InvokeFrom
 from core.app.llm.model_access import resolve_model_context_window, resolve_model_supports_vision
 from core.plugin.provider_identity import normalize_plugin_daemon_provider_identity
@@ -176,16 +176,9 @@ class AgentAppRuntimeRequestBuilder:
         # ENG-616: expand slash-menu mention tokens to canonical names so
         # no frontend-internal {{#…#}} marker ever reaches the model.
         soul_prompt = expand_prompt_mentions(agent_soul.prompt.system_prompt, soul_prompt_resolver).strip()
-        # Fork: append raw embedded inputs (e.g. auth token) from the request
-        # entry (see app_generator.generate) into the soul prompt.
-        runtime_inputs = agent_app_inputs_var.get()
-        if runtime_inputs:
-            runtime_context = "\n".join(f"- {key}: {value}" for key, value in sorted(runtime_inputs.items()))
-            soul_prompt = (
-                f"{soul_prompt}\n\n[RUNTIME CONTEXT]\n{runtime_context}"
-                if soul_prompt
-                else f"[RUNTIME CONTEXT]\n{runtime_context}"
-            )
+        # Fork: substitute {{key}} placeholders with whitelist-approved inputs
+        # (env AGENT_APP_PROMPT_INPUT_KEYS; empty default = no-op).
+        soul_prompt = render_runtime_inputs(soul_prompt)
 
         request = self._request_builder.build_for_agent_app(
             AgentBackendAgentAppRunInput(
