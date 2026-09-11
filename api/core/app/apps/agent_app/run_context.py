@@ -1,0 +1,51 @@
+"""Per-request context carriers for the Agent App generation pipeline.
+
+Fork extension: allow the embedded webapp to pass a whitelisted subset of the
+chat ``inputs`` payload (e.g. an auth token) into the Agent App soul prompt.
+
+How it works
+------------
+``app_generator.generate`` calls :func:`snapshot_runtime_inputs` with the raw
+request inputs BEFORE ``contextvars.copy_context()``; the generation worker
+thread re-applies that snapshot (see ``libs.flask_utils.preserve_flask_contexts``),
+and ``runtime_request_builder`` reads :data:`agent_app_inputs_var` when
+composing the soul prompt.
+
+Whitelist
+---------
+Keys are whitelisted via the ``AGENT_APP_PROMPT_INPUT_KEYS`` environment
+variable (comma-separated). Unset/empty (default) captures nothing, leaving the
+soul prompt untouched. Values are taken from the raw inputs, i.e. before the
+``user_input_form`` filtering in ``_prepare_user_inputs``.
+
+Note: ask_human resume turns (``resume_after_form_submission``) run in a
+background task with empty inputs, so they do not carry these values.
+"""
+
+import os
+from collections.abc import Mapping
+from contextvars import ContextVar
+from typing import Any
+
+AGENT_APP_PROMPT_INPUT_KEYS_ENV = "AGENT_APP_PROMPT_INPUT_KEYS"
+
+agent_app_inputs_var: ContextVar[Mapping[str, Any]] = ContextVar("agent_app_inputs", default={})
+
+
+def _whitelisted_keys() -> frozenset[str]:
+    raw = os.environ.get(AGENT_APP_PROMPT_INPUT_KEYS_ENV, "")
+    return frozenset(key.strip() for key in raw.split(",") if key.strip())
+
+
+def snapshot_runtime_inputs(inputs: Mapping[str, Any]) -> None:
+    """Capture whitelisted raw inputs into the ContextVar for this run.
+
+    Must be called before ``contextvars.copy_context()`` so the generation
+    worker thread sees the values. With an empty whitelist (default) the var
+    is reset to an empty mapping and nothing reaches the soul prompt.
+    """
+    keys = _whitelisted_keys()
+    if not keys:
+        agent_app_inputs_var.set({})
+        return
+    agent_app_inputs_var.set({key: inputs[key] for key in sorted(keys) if key in inputs})
