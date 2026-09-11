@@ -36,7 +36,6 @@ from core.app.apps.agent_app.errors import (
     AgentSessionSnapshotIncompatibleError,
 )
 from core.app.apps.agent_app.generate_response_converter import AgentAppGenerateResponseConverter
-from core.app.apps.agent_app.run_context import snapshot_runtime_inputs
 from core.app.apps.agent_app.runtime_request_builder import AgentAppRuntimeRequestBuilder
 from core.app.apps.agent_app.session_store import AgentAppWorkspaceStore
 from core.app.apps.base_app_queue_manager import AppQueueManager, PublishFrom
@@ -192,10 +191,6 @@ class AgentAppGenerator(MessageBasedAppGenerator):
             message_id=message.id,
         )
 
-        # Fork: capture whitelist-approved inputs (env AGENT_APP_PROMPT_INPUT_KEYS,
-        # empty by default = no-op) for the soul prompt. MUST run before
-        # copy_context() below — the generation worker re-applies this snapshot.
-        snapshot_runtime_inputs(inputs)
         context = contextvars.copy_context()
         worker_thread = threading.Thread(
             target=self._generate_worker,
