@@ -33,14 +33,17 @@ The stock webapp only forwards URL inputs that are declared as form variables,
 so an undeclared key (e.g. auth_code) never reaches the request body. To avoid
 shipping a custom web build, whitelisted keys missing from ``inputs`` are
 recovered from the ``Referer`` header, which preserves the embedded iframe URL
-(e.g. ``http://host/agent/<token>?auth_code=xxx``). The Referer is only trusted
-when its host matches the request ``Host`` header (case-insensitive, port
-ignored); otherwise it is ignored.
+(e.g. ``http://host/agent/<token>?auth_code=xxx``). Values gzip+base64 encoded
+by ``embed.js`` are decoded first (see :func:`_decode_embed_value`). The
+Referer is only trusted when its host matches the request ``Host`` header
+(case-insensitive, port ignored); otherwise it is ignored.
 
 Note: ask_human resume turns (``resume_after_form_submission``) run in a
 background task with empty inputs, so their placeholders are not substituted.
 """
 
+import base64
+import gzip
 import json
 import os
 from collections.abc import Mapping
@@ -74,6 +77,22 @@ def _normalize_host(host: str) -> str:
     return host
 
 
+def _decode_embed_value(value: str) -> str:
+    """Decode a value transported by ``embed.js`` in the iframe URL.
+
+    embed.js gzip-compresses and base64-encodes every inputs / systemVariables
+    value before appending it to the iframe URL query (see
+    ``web/public/embed.js`` compressAndEncodeBase64); the webapp decodes the
+    same way (``decodeBase64AndDecompress``). Plain values (direct page links
+    without embed.js) are returned unchanged.
+    """
+    try:
+        return gzip.decompress(base64.b64decode(value, validate=True)).decode("utf-8")
+    except Exception:
+        # Not embed.js base64+gzip (e.g. a plain-text URL param): use as-is.
+        return value
+
+
 def _inputs_from_referer() -> Mapping[str, Any]:
     """Recover inputs from the request ``Referer`` header (iframe URL).
 
@@ -92,7 +111,7 @@ def _inputs_from_referer() -> Mapping[str, Any]:
             return {}
         if _normalize_host(parsed.netloc) != _normalize_host(request.host):
             return {}
-        return dict(parse_qsl(parsed.query, keep_blank_values=True))
+        return {key: _decode_embed_value(value) for key, value in parse_qsl(parsed.query, keep_blank_values=True)}
     except RuntimeError:
         # Outside a Flask request context (background/test calls): no fallback.
         return {}
