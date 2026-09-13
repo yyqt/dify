@@ -34,8 +34,8 @@ so an undeclared key (e.g. auth_code) never reaches the request body. To avoid
 shipping a custom web build, whitelisted keys missing from ``inputs`` are
 recovered from the ``Referer`` header, which preserves the embedded iframe URL
 (e.g. ``http://host/agent/<token>?auth_code=xxx``). The Referer is only trusted
-when its host matches the request ``Host`` header (case-insensitive, default
-ports normalized); otherwise it is ignored.
+when its host matches the request ``Host`` header (case-insensitive, port
+ignored); otherwise it is ignored.
 
 Note: ask_human resume turns (``resume_after_form_submission``) run in a
 background task with empty inputs, so their placeholders are not substituted.
@@ -59,8 +59,17 @@ def _whitelisted_keys() -> frozenset[str]:
 
 
 def _normalize_host(host: str) -> str:
+    """Normalize a Host header / URL netloc for comparison.
+
+    Case-folded, trailing dot removed, and the port ignored: the stock nginx
+    template forwards ``Host: $host`` without the port while the Referer keeps
+    e.g. ``:8000``, yet both refer to the same deployment. IPv6 literals stay
+    bracketed (``[::1]:8000`` -> ``[::1]``).
+    """
     host = host.strip().lower().rstrip(".")
-    if host.endswith(":80") or host.endswith(":443"):
+    if host.startswith("["):
+        return host[: host.find("]") + 1]
+    if ":" in host:
         return host.rsplit(":", 1)[0]
     return host
 
